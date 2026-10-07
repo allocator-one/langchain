@@ -1214,6 +1214,48 @@ if Code.ensure_loaded?(ReqLLM) do
     # ============================================================
 
     describe "do_api_request/4 streaming (mocked)" do
+      test "keeps each streamed thinking block as its own signed part, in order" do
+        # Anthropic reports a thinking block's signature when the block stops,
+        # so a response with two thinking blocks streams two signature chunks.
+        block_signature = fn signature ->
+          %ReqLLM.StreamChunk{
+            type: :meta,
+            metadata: %{reasoning_details: [%{signature: signature}]}
+          }
+        end
+
+        chunks = [
+          %ReqLLM.StreamChunk{type: :thinking, text: "Find the issue."},
+          block_signature.("SIG_FIRST"),
+          %ReqLLM.StreamChunk{type: :content, text: "Looking it up."},
+          %ReqLLM.StreamChunk{type: :thinking, text: "Then assign it."},
+          block_signature.("SIG_SECOND"),
+          %ReqLLM.StreamChunk{type: :content, text: "Assigning now."},
+          %ReqLLM.StreamChunk{type: :meta, metadata: %{finish_reason: :stop, terminal?: true}}
+        ]
+
+        stub(ReqLLM, :stream_text, fn _model, _context, _opts ->
+          {:ok, fake_stream_response(chunks)}
+        end)
+
+        assert {:ok, message} =
+                 %{model: @live_model, stream: true}
+                 |> ChatReqLLM.new!()
+                 |> ChatReqLLM.do_api_request([Message.new_user!("hi")], [], 3)
+                 |> MessageDelta.merge_deltas()
+                 |> MessageDelta.to_message()
+
+        assert [
+                 %ContentPart{type: :thinking, content: "Find the issue."} = first,
+                 %ContentPart{type: :text, content: "Looking it up."},
+                 %ContentPart{type: :thinking, content: "Then assign it."} = second,
+                 %ContentPart{type: :text, content: "Assigning now."}
+               ] = message.content
+
+        assert first.options[:signature] == "SIG_FIRST"
+        assert second.options[:signature] == "SIG_SECOND"
+      end
+
       test "returns a flat list of MessageDeltas from stream chunks" do
         model = ChatReqLLM.new!(%{model: @live_model, stream: true})
 
