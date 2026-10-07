@@ -559,15 +559,6 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
-    # Anthropic reports each thinking block's signature when that block stops.
-    # A response can hold several thinking blocks (adaptive and interleaved
-    # thinking), each with its own signature, and a replay must send every one
-    # unchanged. Once a block is signed, release the thinking and text slots so
-    # the next block and the text after it get parts of their own, in order.
-    defp close_thinking_block(state) do
-      %{state | type_index_map: Map.drop(state.type_index_map, [:thinking, :content])}
-    end
-
     # Tool call arg fragment: emit incomplete ToolCall delta with the partial JSON string.
     # ToolCall.merge/2 will concatenate binary arguments strings across deltas.
     defp process_stream_chunk(
@@ -600,6 +591,15 @@ if Code.ensure_loaded?(ReqLLM) do
     # All other chunks: delegate to stateless translation
     defp process_stream_chunk(chunk, state) do
       {translate_stream_chunk(chunk), state}
+    end
+
+    # Anthropic reports each thinking block's signature when that block stops.
+    # A response can hold several thinking blocks (adaptive and interleaved
+    # thinking), each with its own signature, and a replay must send every one
+    # unchanged. Once a block is signed, release the thinking and text slots so
+    # the next block and the text after it get parts of their own, in order.
+    defp close_thinking_block(state) do
+      %{state | type_index_map: Map.drop(state.type_index_map, [:thinking, :content])}
     end
 
     # Assigns a monotonic content index per chunk type. The first time a chunk type
